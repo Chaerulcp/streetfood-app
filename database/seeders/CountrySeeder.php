@@ -18,17 +18,43 @@ class CountrySeeder extends Seeder
     public function run()
     {
         $usaStates = [
-            "AL" => 'Alabama',
-            "AK" => 'Alaska',
-            "AZ" => 'Arizona',
-            "AR" => 'Arkansas',
-            "CA" => 'California',
+            "AC" => "Aceh",
+            "SU" => "Sumatera Utara",
+            "SB" => "Sumatera Barat",
+            "RI" => "Riau",
+            "JA" => "Jambi",
+            "SS" => "Sumatera Selatan",
+            "BB" => "Bangka Belitung",
+            "BE" => "Bengkulu",
+            "LA" => "Lampung",
+            "JK" => "DKI Jakarta",
+            "JB" => "Jawa Barat",
+            "BT" => "Banten",
+            "JT" => "Jawa Tengah",
+            "JI" => "Jawa Timur",
+            "YO" => "Yogyakarta",
+            "BA" => "Bali",
+            "NB" => "Nusa Tenggara Barat",
+            "NT" => "Nusa Tenggara Timur",
+            "KB" => "Kalimantan Barat",
+            "KT" => "Kalimantan Tengah",
+            "KI" => "Kalimantan Timur",
+            "KS" => "Kalimantan Selatan",
+            "KU" => "Kalimantan Utara",
+            "SA" => "Sulawesi Utara",
+            "ST" => "Sulawesi Tengah",
+            "SG" => "Sulawesi Tenggara",
+            "SR" => "Sulawesi Barat",
+            "SN" => "Sulawesi Selatan",
+            "GO" => "Gorontalo",
+            "MA" => "Maluku",
+            "MU" => "Maluku Utara",
+            "PA" => "Papua",
+            "PB" => "Papua Barat",
         ];
         $countries = [
-            ['code' => 'geo', 'name' => 'Georgia', 'states' => null],
-            ['code' => 'ind', 'name' => 'India', 'states' => null],
-            ['code' => 'usa', 'name' => 'United States of America', 'states' => json_encode($usaStates)],
-            ['code' => 'ger', 'name' => 'Germany', 'states' => null],
+            ['code' => 'id', 'name' => 'Indonesia', 'states' => json_encode($usaStates)],
+            
         ];
         Country::insert($countries);
     }
