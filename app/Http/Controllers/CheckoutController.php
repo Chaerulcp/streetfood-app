@@ -61,13 +61,17 @@ class CheckoutController extends Controller
             ],
             'item_details' => $lineItems,
         ];
-
-        // Pengecekan tipe data argumen kedua
+        
+        // This is where you put the new code
+        $transactionData['item_details'] = json_encode($transactionData['item_details']);
+        
+        $transactionData['item_details'] = json_decode($transactionData['item_details']);
+        
         if (!is_array($transactionData['item_details'])) {
             // Penanganan jika tipe datanya bukan array
             return redirect()->back()->withErrors('Invalid item details');
         }
-
+        
         $snapToken = Snap::getSnapToken($transactionData);
 
         // Create Order
@@ -97,7 +101,7 @@ class CheckoutController extends Controller
         ];
         Payment::create($paymentData);
 
-        CartItem::where(['user_id' => $user->id])->delete();
+        CartItem::where('user_id', $user->id)->delete();
 
         return redirect()->away(Snap::getSnapURL($snapToken));
     }
@@ -115,7 +119,7 @@ class CheckoutController extends Controller
             $orderId = $request->get('order_id');
 
             $payment = Payment::query()
-                ->where(['order_id' => $orderId])
+                ->where('order_id', $orderId)
                 ->whereIn('status', [PaymentStatus::Pending, PaymentStatus::Paid])
                 ->first();
 
@@ -134,9 +138,11 @@ class CheckoutController extends Controller
             $order = $payment->order;
             $adminUsers = User::where('is_admin', 1)->get();
 
-            foreach ([...$adminUsers, $order->user] as $user) {
-                Mail::to($user)->send(new NewOrderEmail($order, (bool)$user->is_admin));
+            foreach ($adminUsers as $adminUser) {
+                Mail::to($adminUser)->send(new NewOrderEmail($order, true));
             }
+
+            Mail::to($order->user)->send(new NewOrderEmail($order, false));
 
             return view('checkout.success');
         } catch (NotFoundHttpException $e) {
