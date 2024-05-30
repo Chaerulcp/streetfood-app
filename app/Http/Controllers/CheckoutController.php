@@ -13,163 +13,170 @@ use App\Models\Payment;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Mail;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
-use Midtrans\Config;
 use Midtrans\Snap;
+use Midtrans\Config;
+use Midtrans\Notification;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 class CheckoutController extends Controller
 {
     public function checkout(Request $request)
     {
-        /** @var \App\Models\User $user */
         $user = $request->user();
 
-        Config::$serverKey = config('midtrans.serverKey');
-        Config::$clientKey = config('midtrans.clientKey');
-        Config::$isProduction = config('midtrans.isProduction');
+        // Konfigurasi Midtrans
+        Config::$serverKey = config('midtrans.server_key');
+        Config::$isProduction = config('midtrans.is_production');
+        Config::$isSanitized = config('midtrans.is_sanitized');
+        Config::$is3ds = config('midtrans.is_3ds');
 
-        [$products, $cartItems] = Cart::getProductsAndCartItems();
+        list($products, $cartItems) = Cart::getProductsAndCartItems();
 
-        $orderItems = [];
-        $lineItems = [];
         $totalPrice = 0;
+        $item_details = [];
         foreach ($products as $product) {
             $quantity = $cartItems[$product->id]['quantity'];
             $totalPrice += $product->price * $quantity;
-            $lineItems[] = [
+            $item_details[] = [
                 'id' => $product->id,
                 'price' => $product->price,
                 'quantity' => $quantity,
                 'name' => $product->title,
             ];
-            $orderItems[] = [
-                'product_id' => $product->id,
-                'quantity' => $quantity,
-                'unit_price' => $product->price,
-            ];
         }
 
-        if ($totalPrice < 0.01) {
-            // Total price is invalid, handle the error accordingly
-            return redirect()->back()->withErrors('Invalid total price');
-        }
+        $transaction_details = [
+            'order_id' => uniqid(),
+            'gross_amount' => $totalPrice,
+        ];
+
+        $customer_details = [
+            'first_name' => $user->name,
+            'email' => $user->email,
+            'phone' => $user->phone,
+        ];
 
         $transactionData = [
-            'transaction_details' => [
-                'order_id' => uniqid(), // Ganti dengan ID pesanan yang sesuai
-                'gross_amount' => $totalPrice,
-            ],
-            'item_details' => $lineItems,
+            'transaction_details' => $transaction_details,
+            'item_details' => $item_details,
+            'customer_details' => $customer_details,
         ];
-        
-        // This is where you put the new code
-        $transactionData['item_details'] = json_encode($transactionData['item_details']);
-        
-        $transactionData['item_details'] = json_decode($transactionData['item_details']);
-        
-        if (!is_array($transactionData['item_details'])) {
-            // Penanganan jika tipe datanya bukan array
-            return redirect()->back()->withErrors('Invalid item details');
+
+        try {
+            $snapToken = Snap::getSnapToken($transactionData);
+
+            // Create Order
+            $order = Order::create([
+                'user_id' => $user->id,
+                'total_price' => $totalPrice,
+                'status' => OrderStatus::Unpaid,
+            ]);
+
+            // Create Order Items
+            foreach ($item_details as $item) {
+                OrderItem::create([
+                    'order_id' => $order->id,
+                    'product_id' => $item['id'],
+                    'quantity' => $item['quantity'],
+                    'unit_price' => $item['price'],
+                ]);
+            }
+
+            // Create Payment
+            Payment::create([
+                'order_id' => $order->id,
+                'amount' => $totalPrice,
+                'status' => PaymentStatus::Pending,
+                'type' => 'midtrans',
+                'transaction_id' => $transaction_details['order_id'],
+            ]);
+
+            CartItem::where(['user_id' => $user->id])->delete();
+
+            return view('checkout.midtrans', compact('snapToken', 'order')); // Pass $order to the view
+        } catch (\Exception $e) {
+            return view('checkout.failure', ['message' => 'Error creating transaction: ' . $e->getMessage()]);
         }
-        
-        $snapToken = Snap::getSnapToken($transactionData);
-
-        // Create Order
-        $orderData = [
-            'total_price' => $totalPrice,
-            'status' => OrderStatus::Unpaid,
-            'created_by' => $user->id,
-            'updated_by' => $user->id,
-        ];
-        $order = Order::create($orderData);
-
-        // Create Order Items
-        foreach ($orderItems as $orderItem) {
-            $orderItem['order_id'] = $order->id;
-            OrderItem::create($orderItem);
-        }
-
-        // Create Payment
-        $paymentData = [
-            'order_id' => $order->id,
-            'amount' => $totalPrice,
-            'status' => PaymentStatus::Pending,
-            'type' => 'cc',
-            'created_by' => $user->id,
-            'updated_by' => $user->id,
-            'snap_token' => $snapToken,
-        ];
-        Payment::create($paymentData);
-
-        CartItem::where('user_id', $user->id)->delete();
-
-        return redirect()->away(Snap::getSnapURL($snapToken));
     }
 
     public function success(Request $request)
     {
-        /** @var \App\Models\User $user */
-        $user = $request->user();
+        $orderId = $request->input('order_id');
+        $order = Order::findOrFail($orderId);
+        $order->status = OrderStatus::Paid;
+        $order->save();
 
-        Config::$serverKey = config('midtrans.serverKey');
-        Config::$clientKey = config('midtrans.clientKey');
-        Config::$isProduction = config('midtrans.isProduction');
-
-        try {
-            $orderId = $request->get('order_id');
-
-            $payment = Payment::query()
-                ->where('order_id', $orderId)
-                ->whereIn('status', [PaymentStatus::Pending, PaymentStatus::Paid])
-                ->first();
-
-            if (!$payment) {
-                throw new NotFoundHttpException();
-            }
-
-            $paymentStatus = Snap::getTransactionStatus($orderId);
-
-            if ($paymentStatus === 'capture') {
-                $this->updateOrderAndPayment($payment, PaymentStatus::Paid()->value());
-            } else {
-                $this->updateOrderAndPayment($payment, PaymentStatus::Failed()->value());
-            }
-
-            $order = $payment->order;
-            $adminUsers = User::where('is_admin', 1)->get();
-
-            foreach ($adminUsers as $adminUser) {
-                Mail::to($adminUser)->send(new NewOrderEmail($order, true));
-            }
-
-            Mail::to($order->user)->send(new NewOrderEmail($order, false));
-
-            return view('checkout.success');
-        } catch (NotFoundHttpException $e) {
-            throw $e;
-        } catch (\Exception $e) {
-            return view('checkout.failure', ['message' => $e->getMessage()]);
+        // Update payment status
+        $payment = Payment::where('order_id', $order->id)->first();
+        if ($payment) {
+            $payment->status = PaymentStatus::Paid;
+            $payment->save();
         }
+
+        // Send email notifications (optional)
+        // $adminUsers = User::where('is_admin', 1)->get();
+        // Mail::to($adminUsers)->send(new NewOrderEmail($order, true)); // Email to admin
+        // Mail::to($order->user)->send(new NewOrderEmail($order, false)); // Email to customer
+
+        return view('checkout.success', compact('order'));
     }
 
     public function failure(Request $request)
     {
-        return view('checkout.failure', ['message' => ""]);
+        return view('checkout.failure'); 
     }
 
-    private function updateOrderAndPayment(Payment $payment, $paymentStatus)
+    public function webhook(Request $request)
     {
-        $payment->status = $paymentStatus;
-        $payment->update();
+        // Konfigurasi Midtrans
+        Config::$isProduction = config('midtrans.is_production');
+        Config::$serverKey = config('midtrans.server_key');
 
-        $order = $payment->order;
+        $notif = new Notification();
 
-        if ($paymentStatus === PaymentStatus::Paid()->value()) {
-            $order->status = OrderStatus::Paid;
-        } else {
-            $order->status = OrderStatus::Failed;
+        $transaction = $notif->transaction_status;
+        $type = $notif->payment_type;
+        $orderId = $notif->order_id;
+        $fraud = $notif->fraud_status;
+
+        $payment = Payment::where('transaction_id', $orderId)->first();
+
+        if ($transaction == 'capture') {
+            if ($type == 'credit_card') {
+                if ($fraud == 'challenge') {
+                    $payment->status = PaymentStatus::Pending;
+                } else {
+                    $payment->status = PaymentStatus::Paid;
+                }
+            }
+        } elseif ($transaction == 'settlement') {
+            $payment->status = PaymentStatus::Paid;
+        } elseif ($transaction == 'pending') {
+            $payment->status = PaymentStatus::Pending;
+        } elseif ($transaction == 'deny') {
+            $payment->status = PaymentStatus::Failed;
+        } elseif ($transaction == 'expire') {
+            $payment->status = PaymentStatus::Failed;
+        } elseif ($transaction == 'cancel') {
+            $payment->status = PaymentStatus::Failed;
         }
 
-        $order->update();
+        $payment->save();
+
+        if ($payment->status == PaymentStatus::Paid) {
+            $order = Order::find($payment->order_id);
+            $order->status = OrderStatus::Paid;
+            $order->save();
+
+            // Send email notifications (optional)
+            // $adminUsers = User::where('is_admin', 1)->get();
+            // Mail::to($adminUsers)->send(new NewOrderEmail($order, true)); // Email to admin
+            // Mail::to($order->user)->send(new NewOrderEmail($order, false)); // Email to customer
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Webhook received successfully'
+        ]);
     }
 }
