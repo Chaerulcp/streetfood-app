@@ -17,20 +17,19 @@
             </a>
         </p>
 
-        <!-- Session Status -->
         <x-auth-session-status class="mb-4" :status="session('status')"/>
 
         <div class="mb-4">
-            <x-input placeholder="Nama anda" type="text" name="name" :value="old('name')" />
+            <x-input placeholder="Nama anda" type="text" name="name" :value="old('name')" class="w-full" />
         </div>
         <div class="mb-4">
-            <x-input placeholder="Alamat email anda" type="email" name="email" :value="old('email')" />
+            <x-input placeholder="Alamat email anda" type="email" name="email" :value="old('email')" class="w-full" />
         </div>
         <div class="mb-4">
-            <x-input placeholder="Password" type="password" name="password"/>
+            <x-input placeholder="Password" type="password" name="password" class="w-full" />
         </div>
         <div class="mb-4">
-            <x-input placeholder="Masukan ulang Password" type="password" name="password_confirmation"/>
+            <x-input placeholder="Masukan ulang Password" type="password" name="password_confirmation" class="w-full" />
         </div>
 
         <button

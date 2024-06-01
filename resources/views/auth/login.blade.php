@@ -4,7 +4,7 @@
             Login ke akun anda
         </h2>
         <p class="text-center text-gray-500 mb-6">
-            atau    
+            atau
             <a
                 href="{{ route('register') }}"
                 class="text-sm text-purple-700 hover:text-purple-600"
@@ -13,15 +13,14 @@
             </a>
         </p>
 
-        <!-- Session Status -->
         <x-auth-session-status class="mb-4" :status="session('status')"/>
 
         @csrf
         <div class="mb-4">
-            <x-input type="email" name="email" placeholder="Alamat email anda" :value="old('email')"/>
+            <x-input type="email" name="email" placeholder="Alamat email anda" :value="old('email')" class="w-full" /> 
         </div>
         <div class="mb-4">
-            <x-input type="password" name="password" placeholder="Kata sandi anda" :value="old('password')" />
+            <x-input type="password" name="password" placeholder="Kata sandi anda" :value="old('password')" class="w-full" />
         </div>
         <div class="flex justify-between items-center mb-5">
             <div class="flex items-center">
