@@ -12,28 +12,32 @@ use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Midtrans\Snap;
 use Midtrans\Config;
 use Midtrans\Notification;
+use Midtrans\Transaction;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 class CheckoutController extends Controller
 {
+    
     public function checkout(Request $request)
     {
         $user = $request->user();
 
-        // Konfigurasi Midtrans
+        // Midtrans Configuration
         Config::$serverKey = config('midtrans.server_key');
         Config::$isProduction = config('midtrans.is_production');
         Config::$isSanitized = config('midtrans.is_sanitized');
         Config::$is3ds = config('midtrans.is_3ds');
 
-        list($products, $cartItems) = Cart::getProductsAndCartItems();
+        [$products, $cartItems] = Cart::getProductsAndCartItems();
 
-        $totalPrice = 0;
+        $orderItems = [];
         $item_details = [];
+        $totalPrice = 0;
         foreach ($products as $product) {
             $quantity = $cartItems[$product->id]['quantity'];
             $totalPrice += $product->price * $quantity;
@@ -43,10 +47,20 @@ class CheckoutController extends Controller
                 'quantity' => $quantity,
                 'name' => $product->title,
             ];
+            $orderItems[] = [
+                'product_id' => $product->id,
+                'quantity' => $quantity,
+                'unit_price' => $product->price
+            ];
+        }
+
+        // **Add validation before creating the Midtrans transaction:**
+        if ($totalPrice <= 0) {
+            return back()->with('error', 'Your cart is empty or there is a problem with the total price.');
         }
 
         $transaction_details = [
-            'order_id' => uniqid(),
+            'order_id' => uniqid(), // Unique Order ID
             'gross_amount' => $totalPrice,
         ];
 
@@ -66,34 +80,35 @@ class CheckoutController extends Controller
             $snapToken = Snap::getSnapToken($transactionData);
 
             // Create Order
-            $order = Order::create([
-                'user_id' => $user->id,
+            $orderData = [
                 'total_price' => $totalPrice,
                 'status' => OrderStatus::Unpaid,
-            ]);
+                'created_by' => $user->id,
+                'updated_by' => $user->id,
+            ];
+            $order = Order::create($orderData);
 
             // Create Order Items
-            foreach ($item_details as $item) {
-                OrderItem::create([
-                    'order_id' => $order->id,
-                    'product_id' => $item['id'],
-                    'quantity' => $item['quantity'],
-                    'unit_price' => $item['price'],
-                ]);
+            foreach ($orderItems as $orderItem) {
+                $orderItem['order_id'] = $order->id;
+                OrderItem::create($orderItem);
             }
 
             // Create Payment
-            Payment::create([
+            $paymentData = [
                 'order_id' => $order->id,
                 'amount' => $totalPrice,
                 'status' => PaymentStatus::Pending,
                 'type' => 'midtrans',
-                'transaction_id' => $transaction_details['order_id'],
-            ]);
+                'created_by' => $user->id,
+                'updated_by' => $user->id,
+                'transaction_id' => $transaction_details['order_id'] // Store Midtrans transaction ID
+            ];
+            Payment::create($paymentData);
 
             CartItem::where(['user_id' => $user->id])->delete();
 
-            return view('checkout.midtrans', compact('snapToken', 'order')); // Pass $order to the view
+            return view('checkout.midtrans', compact('snapToken', 'order'));
         } catch (\Exception $e) {
             return view('checkout.failure', ['message' => 'Error creating transaction: ' . $e->getMessage()]);
         }
@@ -103,6 +118,9 @@ class CheckoutController extends Controller
     {
         $orderId = $request->input('order_id');
         $order = Order::findOrFail($orderId);
+
+        // Ideally, you'd verify the transaction here using Midtrans API
+        // But for simplicity, we're marking it as paid directly
         $order->status = OrderStatus::Paid;
         $order->save();
 
@@ -113,70 +131,142 @@ class CheckoutController extends Controller
             $payment->save();
         }
 
-        // Send email notifications (optional)
+        // Send email notifications (if applicable)
         // $adminUsers = User::where('is_admin', 1)->get();
-        // Mail::to($adminUsers)->send(new NewOrderEmail($order, true)); // Email to admin
-        // Mail::to($order->user)->send(new NewOrderEmail($order, false)); // Email to customer
+        // foreach ([...$adminUsers, $order->user] as $user) {
+        //     Mail::to($user)->send(new NewOrderEmail($order, (bool)$user->is_admin));
+        // }
+
+        // ...
 
         return view('checkout.success', compact('order'));
     }
 
     public function failure(Request $request)
     {
-        return view('checkout.failure'); 
+        return view('checkout.failure', ['message' => ""]);
     }
+
+    public function checkoutOrder(Order $order, Request $request)
+    {
+        // Midtrans Configuration (same as in checkout)
+        Config::$serverKey = config('midtrans.server_key');
+        Config::$isProduction = config('midtrans.is_production');
+        Config::$isSanitized = config('midtrans.is_sanitized');
+        Config::$is3ds = config('midtrans.is_3ds');
+
+        // Validate the Order's Status
+        if ($order->isPaid() || in_array($order->status, ['shipped', 'completed', 'cancelled'])) {
+            return redirect()->back()->with('error', 'This order cannot be paid.');
+        }
+
+        $item_details = [];
+        $totalPrice = 0;
+        foreach ($order->items as $item) {
+            $totalPrice += $item->unit_price * $item->quantity;
+            $item_details[] = [
+                'id' => $item->product_id,
+                'price' => $item->unit_price,
+                'quantity' => $item->quantity,
+                'name' => $item->product->title,
+            ];
+        }
+
+        // Check for existing transaction and create a new one if expired
+        $orderId = $order->payment->transaction_id ?? uniqid(); 
+        
+        // Update order's payment if transaction ID was generated here
+        if(!$order->payment->transaction_id) {
+            $order->payment->update(['transaction_id' => $orderId]);
+        }
+
+        // Midtrans Transaction Details
+        $transaction_details = [
+            'order_id' => $orderId, 
+            'gross_amount' => $totalPrice,
+        ];
+
+        $customer_details = [
+            'first_name' => $order->user->name,
+            'email' => $order->user->email,
+            'phone' => $order->user->phone,
+        ];
+
+        $transactionData = [
+            'transaction_details' => $transaction_details,
+            'item_details' => $item_details,
+            'customer_details' => $customer_details,
+        ];
+
+        try {
+            $snapToken = Snap::getSnapToken($transactionData);
+            return view('checkout.midtrans', compact('snapToken', 'order'));
+        } catch (\Exception $e) {
+            return view('checkout.failure', ['message' => 'Error creating transaction: ' . $e->getMessage()]);
+        }
+    }
+
 
     public function webhook(Request $request)
     {
-        // Konfigurasi Midtrans
-        Config::$isProduction = config('midtrans.is_production');
+        // Midtrans Configuration (same as in checkout)
         Config::$serverKey = config('midtrans.server_key');
+        Config::$isProduction = config('midtrans.is_production');
+        Config::$isSanitized = config('midtrans.is_sanitized');
+        Config::$is3ds = config('midtrans.is_3ds');
 
         $notif = new Notification();
-
         $transaction = $notif->transaction_status;
         $type = $notif->payment_type;
-        $orderId = $notif->order_id;
+        $order_id = $notif->order_id;
         $fraud = $notif->fraud_status;
 
-        $payment = Payment::where('transaction_id', $orderId)->first();
-
-        if ($transaction == 'capture') {
-            if ($type == 'credit_card') {
-                if ($fraud == 'challenge') {
-                    $payment->status = PaymentStatus::Pending;
-                } else {
-                    $payment->status = PaymentStatus::Paid;
-                }
-            }
-        } elseif ($transaction == 'settlement') {
-            $payment->status = PaymentStatus::Paid;
-        } elseif ($transaction == 'pending') {
-            $payment->status = PaymentStatus::Pending;
-        } elseif ($transaction == 'deny') {
-            $payment->status = PaymentStatus::Failed;
-        } elseif ($transaction == 'expire') {
-            $payment->status = PaymentStatus::Failed;
-        } elseif ($transaction == 'cancel') {
-            $payment->status = PaymentStatus::Failed;
+        $payment = Payment::where('transaction_id', $order_id)->firstOrFail();
+        if (!$payment) {
+            throw new NotFoundHttpException('Payment Not Found');
         }
 
-        $payment->save();
-
-        if ($payment->status == PaymentStatus::Paid) {
-            $order = Order::find($payment->order_id);
-            $order->status = OrderStatus::Paid;
-            $order->save();
-
-            // Send email notifications (optional)
-            // $adminUsers = User::where('is_admin', 1)->get();
-            // Mail::to($adminUsers)->send(new NewOrderEmail($order, true)); // Email to admin
-            // Mail::to($order->user)->send(new NewOrderEmail($order, false)); // Email to customer
+        switch ($transaction) {
+            case 'capture':
+            case 'settlement':
+                $payment->status = PaymentStatus::Paid->value;
+                break;
+            case 'pending':
+                $payment->status = PaymentStatus::Pending->value;
+                break;
+            case 'deny':
+            case 'expire':
+            case 'cancel':
+                $payment->status = PaymentStatus::Failed->value;
+                break;
+            default:
+                Log::info('Unhandled Midtrans Notification Status: ' . $transaction);
+                break;
         }
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Webhook received successfully'
-        ]);
+        $payment->update();
+
+        if ($payment->status == PaymentStatus::Paid->value) {
+            $this->updateOrderAndSession($payment);
+        }
+
+        return response()->json(['status' => 'success', 'message' => 'Webhook received successfully']);
+
+    }    
+
+    private function updateOrderAndSession(Payment $payment)
+    {
+        $payment->status = PaymentStatus::Paid->value;
+        $payment->update();
+
+        $order = $payment->order;
+
+        $order->status = OrderStatus::Paid->value;
+        $order->update();
+        $adminUsers = User::where('is_admin', 1)->get();
+
+        foreach ([...$adminUsers, $order->user] as $user) {
+            Mail::to($user)->send(new NewOrderEmail($order, (bool)$user->is_admin));
+        }
     }
 }

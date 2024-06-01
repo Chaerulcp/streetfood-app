@@ -7,6 +7,7 @@ use App\Http\Controllers\ProductController;
 use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\Route;
 
+
 /*
 |--------------------------------------------------------------------------
 | Web Routes
@@ -40,9 +41,15 @@ Route::middleware(['auth', 'verified'])->group(function() {
     Route::get('/checkout/failure', [CheckoutController::class, 'failure'])->name('checkout.failure');
     Route::get('/orders', [OrderController::class, 'index'])->name('order.index');
     Route::get('/orders/{order}', [OrderController::class, 'view'])->name('order.view');
+    
+    Route::get('/orders', [OrderController::class, 'index'])->name('order.index')->middleware('auth'); 
+
+    Route::post('/checkout/order/{order}', [CheckoutController::class, 'checkoutOrder'])->name('checkout.order')->middleware('auth'); 
+
+    
 });
 
-Route::post('/webhook/stripe', [CheckoutController::class, 'webhook']);
+
 
 
 require __DIR__ . '/auth.php';

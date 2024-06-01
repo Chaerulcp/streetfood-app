@@ -1,82 +1,180 @@
 <x-app-layout>
+    <div class="order-detail-container">
+        <div class="order-info">
+            <h1 class="order-title">Detail Pesanan #{{ $order->id }}</h1>
+            <div class="order-date">
+                <span class="label">Tanggal Pemesanan:</span>
+                <span class="value">{{ $order->created_at->format('d F Y H:i') }}</span>
+            </div>
+            <div class="order-status">
+                <span class="label">Status:</span>
+                <span class="status-badge {{ $order->isPaid() ? 'paid' : ($order->status == 'completed' ? 'completed' : ($order->status == 'shipped' ? 'shipped' : 'unpaid')) }}">{{ $order->status }}</span>
+            </div>
+        </div>
 
-    <div class="container mx-auto lg:w-2/3 p-5">
-        <h1 class="text-3xl font-bold mb-2">Order #{{$order->id}}</h1>
-        <div class="bg-white rounded-lg p-3">
-            <table>
-                <tbody>
+        <table class="order-table">
+            <thead>
                 <tr>
-                    <td class="font-bold py-1 px-2">Order #</td>
-                    <td>{{$order->id}}</td>
+                    <th>Produk</th>
+                    <th class="empty-header"></th>
+                    <th>Jumlah</th>
+                    <th class="text-right">Harga</th>
                 </tr>
+            </thead>
+            <tbody>
+                @foreach($order->items()->with('product')->get() as $item)
                 <tr>
-                    <td class="font-bold py-1 px-2">Order Date</td>
-                    <td>{{$order->created_at}}</td>
-                </tr>
-                <tr>
-                    <td class="font-bold py-1 px-2">Order Status</td>
+                    <td>{{ $item->product->title }}</td>
                     <td>
-                        <span
-                            class="text-white py-1 px-2 rounded {{$order->isPaid() ? 'bg-emerald-500' : 'bg-gray-400'}}">
-                            {{$order->status}}
-                        </span>
+                        <img src="{{ $item->product->image }}" alt="{{ $item->product->title }}" class="product-image">
                     </td>
+                    <td>{{ $item->quantity }}</td>
+                    <td class="text-right">Rp {{ number_format($item->unit_price, 0, ',', '.') }}</td>
                 </tr>
+                @endforeach
+            </tbody>
+            <tfoot>
                 <tr>
-                    <td class="font-bold py-1 px-2">SubTotal</td>
-                    <td>${{ $order->total_price }}</td>
+                    <td colspan="3" class="text-right font-medium">Subtotal:</td>
+                    <td class="text-right font-medium">Rp {{ number_format($order->total_price, 0, ',', '.') }}</td>
                 </tr>
-                </tbody>
-            </table>
-
-            <hr class="my-5"/>
-
-            @foreach($order->items()->with('product')->get() as $item)
-                <!-- Order Item -->
-                <div class="flex flex-col sm:flex-row items-center  gap-4">
-                    <a href="{{ route('product.view', $item->product) }}"
-                       class="w-36 h-32 flex items-center justify-center overflow-hidden">
-                        <img src="{{$item->product->image}}" class="object-cover" alt=""/>
-                    </a>
-                    <div class="flex flex-col justify-between">
-                        <div class="flex justify-between mb-3">
-                            <h3>
-                                {{$item->product->title}}
-                            </h3>
-                        </div>
-                        <div class="flex justify-between items-center">
-                            <div class="flex items-center">Qty: {{$item->quantity}}</div>
-                            <span class="text-lg font-semibold"> ${{$item->unit_price}} </span>
-                        </div>
-                    </div>
-                </div>
-                <!--/ Order Item -->
-                <hr class="my-3"/>
-            @endforeach
-
-            @if (!$order->isPaid())
-                <form action="{{ route('cart.checkout-order', $order) }}"
-                      method="POST">
-                    @csrf
-                    <button class="btn-primary flex items-center justify-center w-full mt-3">
-                        <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            class="h-5 w-5"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            stroke-width="2"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
-                            />
-                        </svg>
-                        Make a Payment
-                    </button>
-                </form>
-            @endif
+            </tfoot>
+        </table>
+        
+        @if (!$order->isPaid() && !in_array($order->status, ['shipped', 'completed', 'cancelled']))
+        <form action="{{ route('checkout.order', $order) }}" method="post" class="payment-form">
+            @csrf
+            <button type="submit" class="pay-now-button">
+                Bayar Sekarang
+            </button>
+        </form>
+        @endif
+        <div class="button-container">
+            <a href="{{ url()->previous() }}" class="back-button">
+                <i class="fas fa-arrow-left"></i> Kembali
+            </a>
         </div>
     </div>
 </x-app-layout>
+
+<style>
+/* --- Container Utama --- */
+.order-detail-container {
+    max-width: 700px; /* Lebar container yang lebih sesuai */
+    margin: 40px auto;
+    padding: 30px;
+    background-color: #fff;
+    border-radius: 10px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    font-family: 'Poppins', sans-serif;
+}
+
+/* --- Informasi Pesanan --- */
+.order-info {
+    margin-bottom: 30px;
+    text-align: left;
+}
+
+.order-title {
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 10px;
+}
+
+.order-date, .order-status {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+}
+
+.label {
+    font-weight: 500;
+}
+
+.status-badge {
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.paid { background-color: #28a745; color: white; } /* Hijau */
+.unpaid { background-color: #dc3545; color: white; } /* Merah */
+.completed { background-color: #28a745; color: white; } /* Hijau */ 
+.shipped { background-color: #ffa500; color: white; } /* Oranye */
+
+/* --- Tabel Pesanan --- */
+.order-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+}
+
+.order-table th, .order-table td {
+    border: 1px solid #dee2e6;
+    padding: 12px;
+    text-align: left;
+}
+
+.order-table th {
+    background-color: #f8f9fa; /* Abu-abu muda */
+}
+
+.empty-header {
+    width: 100px; /* Sesuaikan lebar kolom gambar produk */
+}
+
+.product-image {
+    max-width: 80px;
+    height: auto;
+    border-radius: 5px;
+}
+
+/* --- Formulir Pembayaran --- */
+.payment-form {
+    text-align: center;
+}
+
+.pay-now-button {
+    display: inline-block;
+    padding: 12px 24px;
+    background-color: #007bff;
+    color: white;
+    text-decoration: none;
+    border-radius: 5px;
+    font-weight: 600;
+    transition: background-color 0.3s ease;
+}
+
+.pay-now-button:hover {
+    background-color: #0056b3;
+}
+
+/* --- Tombol Kembali --- */
+.back-button {
+    display: inline-flex;
+    align-items: center;
+    padding: 12px 20px;
+    background-color: #007bff; /* Warna primer (biru) */
+    color: white;
+    text-decoration: none;
+    border: none;          /* Hapus border bawaan */
+    border-radius: 25px;   /* Sudut lebih bulat (opsional) */
+    font-weight: 500;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Efek bayangan */
+}
+
+.back-button:hover {
+    background-color: #0056b3; /* Warna biru yang lebih gelap saat dihover */
+    transform: translateY(-2px); /* Efek naik sedikit saat dihover */
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15); /* Bayangan yang lebih jelas saat dihover */
+}
+
+
+
+.button-container {
+    text-align: center; /* Ratakan tombol ke kiri */
+    margin-top: 20px;
+}
+</style>

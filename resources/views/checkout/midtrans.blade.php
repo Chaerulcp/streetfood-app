@@ -22,6 +22,11 @@
                 onError: function(result){
                     console.log(result);
                     alert('Terjadi kesalahan saat memproses pembayaran Anda.');
+                },
+
+                onClose: function() {
+                    // Lakukan sesuatu ketika Snap ditutup, misalnya:
+                    window.location.href = '{{ route("order.index") }}'; // Redirect ke halaman orders
                 }
             });
         };
